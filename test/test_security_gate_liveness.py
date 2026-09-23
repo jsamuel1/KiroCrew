@@ -598,7 +598,10 @@ def _url_payload_command(n: int) -> str:
 #: Raised by 25, from 33,147, for ``rm_floor._expands_nothing`` and
 #: ``_literal_shell_script``: a single-quoted ``\\$`` stays literal only in a lone
 #: ``<shell> -c`` / ``<<<`` script that expands nothing, judged once per command.
-_PACKAGE_LINE_BUDGET = 33_172
+#: Raised by 1, from 33,172, for the write-protected ``background`` entry in
+#: ``paths_lists``: the gateway's background command records name the pid it signals,
+#: so a session must not be able to write one. Data, not rule logic.
+_PACKAGE_LINE_BUDGET = 33_173
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
