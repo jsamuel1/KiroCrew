@@ -508,6 +508,14 @@ def apply_kas_cli_floor(
         return None
     if ACP_BACKEND_KAS not in selectable_backends():
         return None
+    if not kiro_pick:
+        from kiro_crew.agent_sdk import kas_bundle
+
+        if kas_bundle.kas_route().bundle:
+            # KAS takes Kiro Crew's own engine here because kiro-cli's relay cannot
+            # run (``acp/kas_route.py``), so kiro-cli's engine support is not a
+            # fact about this host's KAS either.
+            return None
     from kiro_crew.agent_sdk import kas_engine_verdict
 
     offers_kas, reason = kas_engine_verdict()
