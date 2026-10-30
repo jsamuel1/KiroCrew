@@ -102,6 +102,51 @@ def _svc(request: web.Request):
     return getattr(state, "workflow_service", None)
 
 
+async def _resolve_fallback_folder_id(
+    request: web.Request, ref: str
+) -> tuple[str, Optional[web.Response]]:
+    """Resolve a fallback-slot folder reference to an EXISTING folder id.
+
+    ``ref`` is the opt-in folder for the ``workflow-<run_id>`` fallback session:
+    a sidebar folder id or a ``/``-separated human path, like
+    ``session_create``'s ``folder``. It must name a folder that ALREADY exists —
+    nothing is created here. The run owns no identity under which to create a
+    folder in the person's sidebar, so a reference that does not resolve is a
+    caller-visible error, not a silent create or a silent drop.
+
+    Resolution goes through the ONE canonical read-only resolver
+    ``_resolve_chat_folder_id`` — imported here through the MCP facade
+    ``kiro_crew.mcp_dashboard`` (which re-exports it), NOT from the owner module
+    directly, so the facade-family boundary stays intact
+    (``test_no_module_outside_the_family_imports_an_owner``). It accepts an id or
+    a human path, refuses an ambiguous path (two folders rendering the same
+    path, or a name that is both a folder and a nested path) with a message
+    naming the candidates, and never builds a client or writes. The import is
+    lazy (inside the function) to avoid an import cycle at module load. An empty
+    ref (or ``root``) means "do not file" — ``("", None)`` — today's default.
+
+    Returns ``(folder_id, None)`` on success, or ``("", response)`` with a ready
+    400 the caller returns as-is when the folder is missing or ambiguous.
+    """
+    from kiro_crew.mcp_dashboard import _resolve_chat_folder_id
+
+    ref = (ref or "").strip()
+    if not ref or ref.lower() == "root":
+        # No folder given (the common case): do not file, and do NOT touch
+        # request state — a caller/test that passes no folder need not carry it.
+        return "", None
+    state: DashboardState = request.app["state"]
+    folder_id, err = _resolve_chat_folder_id(ref, state._folders)
+    if err:
+        return "", web.json_response({"error": err, "code": "folder_unresolvable"}, status=400)
+    if not folder_id:
+        return "", web.json_response(
+            {"error": f"folder not found: {ref}", "code": "folder_unresolvable"},
+            status=400,
+        )
+    return folder_id, None
+
+
 def _sel():
     """Late-bind the shared SEL provider for handler-package import safety."""
     # Circular import: handlers.__init__ re-exports this module, while tests patch
@@ -420,6 +465,11 @@ async def api_workflow_definition_run(request: web.Request) -> web.Response:
     budget_total = body.get("budget_total")
     if isinstance(budget_total, bool) or not isinstance(budget_total, int):
         budget_total = None
+    folder_id, folder_refusal = await _resolve_fallback_folder_id(
+        request, str(body.get("folder") or "")
+    )
+    if folder_refusal is not None:
+        return folder_refusal
     try:
         out = await _start_admitted(
             request,
@@ -434,6 +484,8 @@ async def api_workflow_definition_run(request: web.Request) -> web.Response:
                 expected_store=request.get("workflow_expected_store"),
                 budget_total=budget_total,
                 timeout_secs=_opt_int(body.get("timeout_secs")),
+                fallback_title=str(body.get("title") or ""),
+                fallback_folder_id=folder_id,
             ),
         )
     except Exception:
@@ -583,6 +635,15 @@ async def api_workflow_run(request: web.Request) -> web.Response:
     refusal = await _private_memory_refusal(request, "workflow.run")
     if refusal is not None:
         return refusal
+    # Resolve the opt-in fallback folder to an EXISTING folder id BEFORE
+    # admission reserves capacity, so an unresolvable folder returns 400 without
+    # leaving an ADMITTED record behind (the sibling handlers resolve before
+    # admission/start for the same reason).
+    folder_id, folder_refusal = await _resolve_fallback_folder_id(
+        request, str(body.get("folder") or "")
+    )
+    if folder_refusal is not None:
+        return folder_refusal
     from kiro_crew.shared_crew.containment import principal_scope
 
     run_admission = await _admit_workflow_run(request, svc, body)
@@ -603,6 +664,8 @@ async def api_workflow_run(request: web.Request) -> web.Response:
                 expected_store=request.get("workflow_expected_store"),
                 budget_total=budget_total,
                 timeout_secs=_opt_int(body.get("timeout_secs")),
+                fallback_title=str(body.get("title") or ""),
+                fallback_folder_id=folder_id,
             )
     except Exception:
         logger.exception("workflow run failed")
@@ -657,6 +720,11 @@ async def api_workflow_run_intent(request: web.Request) -> web.Response:
     refusal = await _private_memory_refusal(request, "workflow.run_intent")
     if refusal is not None:
         return refusal
+    folder_id, folder_refusal = await _resolve_fallback_folder_id(
+        request, str(body.get("folder") or "")
+    )
+    if folder_refusal is not None:
+        return folder_refusal
     try:
         out = await _start_admitted(
             request,
@@ -671,6 +739,8 @@ async def api_workflow_run_intent(request: web.Request) -> web.Response:
                 expected_store=request.get("workflow_expected_store"),
                 budget_total=budget_total,
                 timeout_secs=_opt_int(body.get("timeout_secs")),
+                fallback_title=str(body.get("title") or ""),
+                fallback_folder_id=folder_id,
             ),
         )
     except Exception:

@@ -191,7 +191,39 @@ def inject_workflow_result(
                 from kiro_crew.dashboard.transcript_binding import bind_transcript
 
                 bind_transcript(state, slot)
-            slot.title = f"Workflow: {snapshot.get('name') or run_id}"
+            # Opt-in per-run title for the fallback slot: a webhook-driven run
+            # whose originating chat is always gone can name its own slot so many
+            # runs of one workflow are told apart. The default holds when the
+            # caller gives none. Clean the title HERE, at the one point every
+            # run path (the three HTTP handlers and the MCP tool) converges on
+            # applying it to a slot, with the same display-text cleaner a
+            # caller-explicit session title gets (redact, single line, bounded).
+            from kiro_crew.dashboard.chat_cards import _clean as _clean_display_text
+
+            fallback_title = _clean_display_text(snapshot.get("fallback_title") or "", 200)
+            if fallback_title:
+                slot.title = fallback_title
+                # A caller-explicit title is pinned exactly as slot_create pins
+                # one: mark it user-origin and bump the epoch, so a follow-up
+                # turn's background auto-titling stands down instead of silently
+                # replacing the caller's chosen name. The DEFAULT title below is
+                # left un-pinned, keeping today's behaviour for a run that named
+                # no title.
+                slot._titled = True
+                slot._title_origin = "user"
+                slot._title_epoch += 1
+            else:
+                slot.title = f"Workflow: {snapshot.get('name') or run_id}"
+            # Opt-in filing: the folder id was resolved server-side by the run
+            # handler to an EXISTING folder. File the fallback slot under it only
+            # when that folder still exists at delivery (the same existence check
+            # slot_create makes); a folder deleted meanwhile leaves the slot
+            # unfiled, and nothing is recreated.
+            fallback_folder_id = (snapshot.get("fallback_folder_id") or "").strip()
+            if fallback_folder_id and any(
+                f.get("id") == fallback_folder_id for f in getattr(state, "_folders", [])
+            ):
+                slot.folder_id = fallback_folder_id
 
         # Dedup: don't double-inject the same result on a re-fire.
         already = any(m.get("content") == msg for m in getattr(slot, "messages", []))

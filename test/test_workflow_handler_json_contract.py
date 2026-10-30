@@ -201,3 +201,46 @@ async def test_runs_list_is_compact_and_detail_carries_result() -> None:
         got = await client.get("/api/workflows/runs/wf_1")
         assert got.status == 200
         assert (await got.json())["result"] == big_result
+
+
+async def test_run_rejects_bad_folder_before_admission_reserves_capacity() -> None:
+    """An unresolvable ``folder`` must 400 BEFORE fair admission reserves a slot.
+
+    ``api_workflow_run`` admits the run (Shared Crew fair admission) and then
+    starts it. If the folder were resolved AFTER admission, a bad folder would
+    return a 400 while the ADMITTED record kept its reserved capacity — the
+    deadline sweep ignores ADMITTED work and the probe sweep needs an
+    execution_id, so each bad-folder request would permanently leak one of the
+    caller's admission slots. The folder is therefore resolved first; this test
+    pins that order by failing if admission is reached on a bad folder.
+    """
+    from unittest.mock import patch
+
+    import kiro_crew.dashboard.handlers.workflows as wf
+
+    start = AsyncMock(return_value={"run_id": "wf_never"})
+    app = web.Application()
+    app["state"] = SimpleNamespace(workflow_service=SimpleNamespace(start=start))
+    app.router.add_post("/api/workflows/run", api_workflow_run)
+
+    admit = AsyncMock()
+
+    async def _bad_folder(_request, _ref):
+        return "", web.json_response(
+            {"error": "folder not found: Nope", "code": "folder_unresolvable"}, status=400
+        )
+
+    with (
+        patch.object(wf, "_resolve_fallback_folder_id", _bad_folder),
+        patch.object(wf, "_admit_workflow_run", admit),
+    ):
+        async with TestClient(TestServer(app)) as client:
+            response = await client.post(
+                "/api/workflows/run", json={"source": "print('ok')", "folder": "Nope"}
+            )
+            body = await response.json()
+
+    assert response.status == 400
+    assert body["code"] == "folder_unresolvable"
+    admit.assert_not_awaited()  # admission never ran -> no slot leaked
+    start.assert_not_awaited()
