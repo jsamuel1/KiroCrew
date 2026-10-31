@@ -707,8 +707,8 @@ icon; an unrecognised or absent name renders a generic panel glyph.
 
 ### `contributes.linkPreviews` — Hover Cards for Links
 
-A link preview shows the app's own card when the user hovers a link in the
-dashboard. The host owns detection (which links, the 300 ms hover delay, leave,
+A link preview shows the app's own card when the user hovers a link in a chat
+message (links elsewhere in the dashboard never reach an app). The host owns detection (which links, the 300 ms hover delay, leave,
 Escape, scroll and blur); the app owns the card, which runs in a sandboxed frame.
 No app code runs until a link on one of the provider's `hosts` is hovered.
 
@@ -806,7 +806,8 @@ reachable. The request carries a capability the dashboard mints for that one
 frame (`X-KiroCrew-Capability`), short-lived and renewed while the frame lives;
 no cookie is sent and no other route accepts it.
 
-If the frame does not report `ready` within 10 seconds, or the module fails to
+If the app list cannot be read, a hover on a chat link shows the same notice and
+the list is asked for again. If the frame does not report `ready` within 10 seconds, or the module fails to
 import, or `activate` throws, the host logs the error, shows a short "couldn't
 load this preview" notice under the hovered element, and tries again on a hover
 at least 30 seconds later. When the app is disabled the host sends `hide('disabled')`
@@ -840,12 +841,16 @@ open the app's card:
   The host remembers it across reloads, so the first paint after a reload already
   follows the app's settings although the module only loads on the first hover.
 - A pattern must compile with its flags and must not match the empty string. It is
-  never run on the dashboard's thread: matching happens in a Web Worker, one batch
-  per render, with a hard budget of 250 ms per batch. A pattern that overruns is
+  never run on the dashboard's thread, not even for that check: matching and the
+  empty-string test happen in a Web Worker, one batch per render, with a hard budget
+  of 250 ms per batch, counted from the batch's first pattern. A pattern that matches
+  the empty string is turned off for the session. A pattern that overruns is
   stopped (the worker is terminated), turned off for the rest of the session, and
   logged once; the rest of the batch is matched again without it. A text node
   longer than 2,000 characters is not scanned. Text renders plain until the worker
-  answers, then gains its spans. `textPatterns` is signed.
+  answers, then gains its spans. When two apps match the same span text, the one
+  listed first owns it. If the worker does not start within 5 seconds,
+  plain-text previews are off for that page load. `textPatterns` is signed.
 
 ### `backend` — App Backend Process
 
