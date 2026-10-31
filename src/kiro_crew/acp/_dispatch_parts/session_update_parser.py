@@ -18,6 +18,7 @@ from kiro_crew.acp._dispatch_parts.surfaced_text import (
     _redact,
     derive_edit_diff,
     extract_tool_purpose,
+    is_rendered_edit_diff,
     make_unified_diff,
     select_tool_title,
 )
@@ -418,6 +419,7 @@ def _build_tool_refinement_event(
     content_blocks = update.get("content", [])
     _diff_old_text: str | None = None
     _diff_path: str = ""
+    found_diff = False
     if isinstance(content_blocks, list):
         for cb in content_blocks:
             if isinstance(cb, dict) and cb.get("type") == "diff":
@@ -430,7 +432,21 @@ def _build_tool_refinement_event(
                 )
                 if diff_str:
                     input_str = diff_str
+                    found_diff = True
                 break
+    # The same edit-args fallback as the initial tool_call. A refinement may
+    # omit ``kind``: kiro-cli v3 re-sends a replace's arguments on kind-less
+    # updates (one with an empty placeholder diff block) before the permission
+    # request, and the last rendering is what the approval row shows. The diff
+    # the call already shows is then the edit evidence (is_rendered_edit_diff).
+    if not found_diff and (
+        kind == "edit"
+        or (tool_input_cache is not None and is_rendered_edit_diff(tool_input_cache.get(_rk)))
+        or (isinstance(raw_input, dict) and raw_input.get("command") == "strReplace")
+    ):
+        diff_str = derive_edit_diff(raw_input)
+        if diff_str:
+            input_str = diff_str
     input_redacted = False
     if input_str:
         safe_input = _redact(input_str)
