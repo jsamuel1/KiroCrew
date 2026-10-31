@@ -168,6 +168,9 @@ export function useTurnCompletion({ dispatch, queryClient, reconnectingRef }: Tu
           isActive,
         )
         refreshSessionControlStatusesAfterTurn(queryClient, data.slot, isActive)
+        // Milestones are counted at turn start and when a feature happens, so
+        // the end of the turn in view is when a new one can be due (RFC 4.3).
+        if (isActive && !reconnectingRef.current) void queryClient.invalidateQueries({ queryKey: ['milestones'] })
       }
     },
   }), [dispatch, queryClient, reconnectingRef])
